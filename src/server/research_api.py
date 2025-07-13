@@ -186,14 +186,21 @@ async def list_research_tasks(
                     detail=f"Invalid status. Valid values: {[s.value for s in ResearchStatus]}"
                 )
         
-        # Get tasks with filtering
-        all_tasks = task_manager.list_tasks(status_filter=status_filter)
-        total = len(all_tasks)
+        # Apply pagination offset
+        offset = (page - 1) * limit
         
-        # Apply pagination
-        start_idx = (page - 1) * limit
-        end_idx = start_idx + limit
-        paginated_tasks = all_tasks[start_idx:end_idx]
+        # Get tasks with filtering and pagination from database
+        paginated_tasks = task_manager.list_tasks(
+            status_filter=status_filter,
+            limit=limit,
+            offset=offset
+        )
+        
+        # Get total count for pagination
+        # Note: This is a simple approach - for better performance, 
+        # could optimize by adding count method to repository
+        all_tasks = task_manager.list_tasks(status_filter=status_filter, limit=10000)
+        total = len(all_tasks)
         
         # Convert to response format
         task_results = []

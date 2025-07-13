@@ -1,29 +1,34 @@
 """
 Research Task Manager for DeerFlow API
-Manages research task lifecycle and status tracking
+Manages research task lifecycle and status tracking with persistent storage
 """
 
 import asyncio
 import uuid
-from typing import Dict, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, Optional, Any, List
+from datetime import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
 
+from src.research.database import (
+    ResearchTaskRepository, 
+    ResearchTaskDB, 
+    ResearchStatusEnum,
+    init_database
+)
+
 logger = logging.getLogger(__name__)
 
-class ResearchStatus(Enum):
-    """Research task status states"""
-    PENDING = "pending"
-    RUNNING = "running" 
-    COMPLETED = "completed"
-    FAILED = "failed"
-    SUBMITTED_TO_MKTAGENT = "submitted_to_mktagent"
+# Re-export for backward compatibility
+ResearchStatus = ResearchStatusEnum
 
 @dataclass
 class ResearchTask:
-    """Research task data model"""
+    """
+    In-memory research task data model.
+    Now backed by persistent database storage.
+    """
     id: str
     query: str
     status: ResearchStatus = ResearchStatus.PENDING
@@ -41,16 +46,45 @@ class ResearchTask:
     enable_background_investigation: bool = True
     mktagent_campaign_id: Optional[int] = None
     submit_to_mktagent: bool = False
+    
+    @classmethod
+    def from_db(cls, db_task: ResearchTaskDB) -> 'ResearchTask':
+        """Create ResearchTask from database model"""
+        return cls(
+            id=db_task.id,
+            query=db_task.query,
+            status=db_task.status,
+            created_at=db_task.created_at,
+            completed_at=db_task.completed_at,
+            final_report=db_task.final_report,
+            error=db_task.error,
+            mktagent_content_id=db_task.mktagent_content_id,
+            processing_time=db_task.processing_time,
+            sources_analyzed=db_task.sources_analyzed,
+            max_plan_iterations=db_task.max_plan_iterations,
+            max_step_num=db_task.max_step_num,
+            enable_background_investigation=db_task.enable_background_investigation,
+            mktagent_campaign_id=db_task.mktagent_campaign_id,
+            submit_to_mktagent=db_task.submit_to_mktagent
+        )
 
 class ResearchTaskManager:
     """
-    Manages research tasks similar to mktagent's task management patterns.
-    Reuses patterns from mktagent's main.py for consistency.
+    Manages research tasks with persistent SQLite storage.
+    Now uses database backend instead of in-memory storage.
     """
     
     def __init__(self):
-        self.tasks: Dict[str, ResearchTask] = {}
+        self.repository = ResearchTaskRepository()
         self._lock = asyncio.Lock()
+        
+        # Initialize database on startup
+        try:
+            init_database()
+            logger.info("ResearchTaskManager initialized with persistent storage")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}")
+            raise
     
     def create_task(
         self, 
@@ -63,28 +97,39 @@ class ResearchTaskManager:
     ) -> str:
         """
         Create a new research task and return its ID.
-        Similar to mktagent's content creation pattern.
+        Now persists to database.
         """
         task_id = f"research_{uuid.uuid4().hex[:8]}"
         
-        task = ResearchTask(
-            id=task_id,
-            query=query,
-            max_plan_iterations=max_plan_iterations,
-            max_step_num=max_step_num,
-            enable_background_investigation=enable_background_investigation,
-            mktagent_campaign_id=mktagent_campaign_id,
-            submit_to_mktagent=submit_to_mktagent
-        )
-        
-        self.tasks[task_id] = task
-        logger.info(f"Created research task {task_id} for query: {query[:50]}...")
-        
-        return task_id
+        try:
+            # Create task in database
+            self.repository.create_task(
+                task_id=task_id,
+                query=query,
+                max_plan_iterations=max_plan_iterations,
+                max_step_num=max_step_num,
+                enable_background_investigation=enable_background_investigation,
+                mktagent_campaign_id=mktagent_campaign_id,
+                submit_to_mktagent=submit_to_mktagent
+            )
+            
+            logger.info(f"Created persistent research task {task_id} for query: {query[:50]}...")
+            return task_id
+            
+        except Exception as e:
+            logger.error(f"Failed to create task {task_id}: {e}")
+            raise
     
     def get_task(self, task_id: str) -> Optional[ResearchTask]:
-        """Get task by ID"""
-        return self.tasks.get(task_id)
+        """Get task by ID from database"""
+        try:
+            db_task = self.repository.get_task(task_id)
+            if db_task:
+                return ResearchTask.from_db(db_task)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get task {task_id}: {e}")
+            return None
     
     async def update_task_status(
         self, 
@@ -93,101 +138,72 @@ class ResearchTaskManager:
         **kwargs
     ) -> bool:
         """
-        Update task status and metadata.
-        Thread-safe using async lock similar to mktagent patterns.
+        Update task status and metadata in database.
+        Thread-safe using async lock.
         """
         async with self._lock:
-            task = self.tasks.get(task_id)
-            if not task:
-                logger.error(f"Task {task_id} not found for status update")
+            try:
+                success = self.repository.update_task_status(
+                    task_id=task_id,
+                    status=status,
+                    **kwargs
+                )
+                return success
+            except Exception as e:
+                logger.error(f"Failed to update task {task_id}: {e}")
                 return False
-            
-            # Update status
-            old_status = task.status
-            task.status = status
-            
-            # Update additional fields
-            for key, value in kwargs.items():
-                if hasattr(task, key):
-                    setattr(task, key, value)
-            
-            # Set completion time for terminal states
-            if status in [ResearchStatus.COMPLETED, ResearchStatus.FAILED]:
-                task.completed_at = datetime.now()
-                if task.created_at:
-                    task.processing_time = (task.completed_at - task.created_at).total_seconds()
-            
-            logger.info(f"Task {task_id} status updated: {old_status.value} -> {status.value}")
-            return True
     
     def list_tasks(
         self, 
         status_filter: Optional[ResearchStatus] = None,
-        limit: int = 100
-    ) -> list[ResearchTask]:
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[ResearchTask]:
         """
-        List tasks with optional filtering.
-        Similar to mktagent's pagination patterns.
+        List tasks with optional filtering from database.
         """
-        tasks = list(self.tasks.values())
-        
-        if status_filter:
-            tasks = [t for t in tasks if t.status == status_filter]
-        
-        # Sort by creation time, newest first
-        tasks.sort(key=lambda t: t.created_at, reverse=True)
-        
-        return tasks[:limit]
+        try:
+            db_tasks, _ = self.repository.list_tasks(
+                status_filter=status_filter,
+                limit=limit,
+                offset=offset
+            )
+            
+            # Convert to in-memory objects
+            tasks = [ResearchTask.from_db(db_task) for db_task in db_tasks]
+            return tasks
+            
+        except Exception as e:
+            logger.error(f"Failed to list tasks: {e}")
+            return []
     
     def get_task_statistics(self) -> Dict[str, Any]:
-        """Get task statistics for monitoring"""
-        total_tasks = len(self.tasks)
-        status_counts = {}
-        
-        for status in ResearchStatus:
-            count = sum(1 for task in self.tasks.values() if task.status == status)
-            status_counts[status.value] = count
-        
-        # Calculate average processing time for completed tasks
-        completed_tasks = [t for t in self.tasks.values() 
-                         if t.status == ResearchStatus.COMPLETED and t.processing_time]
-        avg_processing_time = (
-            sum(t.processing_time for t in completed_tasks) / len(completed_tasks)
-            if completed_tasks else 0
-        )
-        
-        return {
-            "total_tasks": total_tasks,
-            "status_counts": status_counts,
-            "average_processing_time_seconds": round(avg_processing_time, 2),
-            "completed_tasks": len(completed_tasks)
-        }
+        """Get task statistics from database"""
+        try:
+            return self.repository.get_statistics()
+        except Exception as e:
+            logger.error(f"Failed to get statistics: {e}")
+            return {}
     
     async def cleanup_old_tasks(self, max_age_hours: int = 24) -> int:
         """
-        Clean up old completed/failed tasks.
-        Similar to mktagent's cleanup patterns.
+        Clean up old completed/failed tasks from database.
         """
-        cutoff_time = datetime.now() - timedelta(hours=max_age_hours)
-        removed_count = 0
-        
         async with self._lock:
-            tasks_to_remove = []
-            
-            for task_id, task in self.tasks.items():
-                if (task.completed_at and 
-                    task.completed_at < cutoff_time and 
-                    task.status in [ResearchStatus.COMPLETED, ResearchStatus.FAILED]):
-                    tasks_to_remove.append(task_id)
-            
-            for task_id in tasks_to_remove:
-                del self.tasks[task_id]
-                removed_count += 1
-        
-        if removed_count > 0:
-            logger.info(f"Cleaned up {removed_count} old tasks")
-        
-        return removed_count
+            try:
+                removed_count = self.repository.cleanup_old_tasks(max_age_hours)
+                return removed_count
+            except Exception as e:
+                logger.error(f"Failed to cleanup old tasks: {e}")
+                return 0
+    
+    def delete_task(self, task_id: str) -> bool:
+        """Delete a task from database"""
+        try:
+            return self.repository.delete_task(task_id)
+        except Exception as e:
+            logger.error(f"Failed to delete task {task_id}: {e}")
+            return False
 
 # Global task manager instance
 # Similar to mktagent's global service instances pattern
