@@ -61,6 +61,10 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Include research API router
+from src.server.research_api import router as research_router
+app.include_router(research_router)
+
 graph = build_graph_with_memory()
 
 
