@@ -242,9 +242,9 @@ async def delete_research_task(research_id: str):
         if not task:
             raise HTTPException(status_code=404, detail="Research task not found")
         
-        # Remove from task manager
-        if research_id in task_manager.tasks:
-            del task_manager.tasks[research_id]
+        # Delete from database using task manager
+        success = task_manager.delete_task(research_id)
+        if success:
             logger.info(f"Deleted research task {research_id}")
             return {"message": "Research task deleted successfully"}
         else:
