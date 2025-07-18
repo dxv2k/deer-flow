@@ -46,10 +46,21 @@ class ResearchTask:
     enable_background_investigation: bool = True
     mktagent_campaign_id: Optional[int] = None
     submit_to_mktagent: bool = False
+    # New fields for summary and insights
+    summary: Optional[str] = None
+    insights: Optional[List[Any]] = field(default_factory=list)
     
     @classmethod
-    def from_db(cls, db_task: ResearchTaskDB) -> 'ResearchTask':
+    def from_db(cls, db_task: 'ResearchTaskDB') -> 'ResearchTask':
         """Create ResearchTask from database model"""
+        # Parse insights JSON if available
+        insights_list = []
+        if getattr(db_task, 'insights', None):
+            import json
+            try:
+                insights_list = json.loads(db_task.insights)
+            except Exception:
+                insights_list = []
         return cls(
             id=db_task.id,
             query=db_task.query,
@@ -65,7 +76,9 @@ class ResearchTask:
             max_step_num=db_task.max_step_num,
             enable_background_investigation=db_task.enable_background_investigation,
             mktagent_campaign_id=db_task.mktagent_campaign_id,
-            submit_to_mktagent=db_task.submit_to_mktagent
+            submit_to_mktagent=db_task.submit_to_mktagent,
+            summary=getattr(db_task, 'summary', None),
+            insights=insights_list,
         )
 
 class ResearchTaskManager:

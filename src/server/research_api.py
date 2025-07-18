@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List 
 import json 
 import logging
+import traceback
 
 from src.research.task_manager import task_manager, ResearchStatus
 from src.research.background_processor import BackgroundResearchProcessor
@@ -308,36 +309,43 @@ async def list_research_tasks(
         )
         
         # Get total count for pagination
-        # Note: This is a simple approach - for better performance, 
-        # could optimize by adding count method to repository
         all_tasks = task_manager.list_tasks(status_filter=status_filter, limit=10000)
         total = len(all_tasks)
         
         # Convert to response format
         task_results = []
         for task in paginated_tasks:
-            # Parse insights from JSON string if available
+            # Handle summary
+            summary = getattr(task, "summary", None)
+            # Handle insights robustly
+            insights_raw = getattr(task, "insights", None)
             insights_list = []
-            if task.insights:
-                try:
-                    insights_list = json.loads(task.insights)
-                except json.JSONDecodeError:
-                    insights_list = []
-            
-            task_results.append(ResearchResult(
-                research_id=task.id,
-                status=task.status.value,
-                query=task.query,
-                created_at=task.created_at.isoformat(),
-                completed_at=task.completed_at.isoformat() if task.completed_at else None,
-                final_report=task.final_report if task.status == ResearchStatus.COMPLETED else None,
-                summary=task.summary,
-                insights=insights_list,
-                error=task.error,
-                mktagent_content_id=task.mktagent_content_id,
-                processing_time=task.processing_time,
-                sources_analyzed=task.sources_analyzed
-            ))
+            if insights_raw:
+                if isinstance(insights_raw, str):
+                    try:
+                        insights_list = json.loads(insights_raw)
+                    except Exception as e:
+                        logger.error(f"Failed to parse insights for task {getattr(task, 'id', 'unknown')}: {e}\n{traceback.format_exc()}")
+                        insights_list = []
+                elif isinstance(insights_raw, list):
+                    insights_list = insights_raw
+            try:
+                task_results.append(ResearchResult(
+                    research_id=task.id,
+                    status=task.status.value,
+                    query=task.query,
+                    created_at=task.created_at.isoformat(),
+                    completed_at=task.completed_at.isoformat() if task.completed_at else None,
+                    final_report=task.final_report if task.status == ResearchStatus.COMPLETED else None,
+                    summary=summary,
+                    insights=insights_list,
+                    error=task.error,
+                    mktagent_content_id=getattr(task, "mktagent_content_id", None),
+                    processing_time=getattr(task, "processing_time", None),
+                    sources_analyzed=getattr(task, "sources_analyzed", None)
+                ))
+            except Exception as e:
+                logger.error(f"Failed to build ResearchResult for task {getattr(task, 'id', 'unknown')}: {e}\n{traceback.format_exc()}")
         
         return ResearchListResponse(
             data=task_results,
@@ -349,8 +357,8 @@ async def list_research_tasks(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to list research tasks: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Failed to list research tasks: {e}\n{traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"{e}\n{traceback.format_exc()}")
 
 @router.delete("/tasks/{research_id}")
 async def delete_research_task(research_id: str):
