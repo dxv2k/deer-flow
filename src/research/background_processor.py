@@ -118,12 +118,35 @@ class BackgroundResearchProcessor:
                     "error": error_msg
                 }
             
-            # Update task with results
+            # Generate summary and insights after successful research
+            summary = None
+            insights = []
+            try:
+                from src.research.summarization import summarize_research_result
+                
+                logger.info(f"Task {task_id}: Generating summary and insights from final report")
+                summarization_result = summarize_research_result(final_report)
+                
+                if summarization_result.get("success", False):
+                    summary = summarization_result.get("summary")
+                    insights = summarization_result.get("insights", [])
+                    logger.info(f"Task {task_id}: Successfully generated summary ({len(summary) if summary else 0} chars) and {len(insights)} insights")
+                else:
+                    error_msg = summarization_result.get("error", "Unknown summarization error")
+                    logger.warning(f"Task {task_id}: Summarization failed but continuing: {error_msg}")
+                    
+            except Exception as summarization_error:
+                logger.warning(f"Task {task_id}: Summarization failed but continuing research completion: {str(summarization_error)}")
+                logger.warning(f"Summarization traceback: {traceback.format_exc()}")
+            
+            # Update task with results including summary and insights
             try:
                 update_success = await self.task_manager.update_task_status(
                     task_id,
                     ResearchStatus.COMPLETED,
                     final_report=final_report,
+                    summary=summary,
+                    insights=insights,
                     processing_time=execution_time,
                     sources_analyzed=sources_count
                 )
@@ -157,6 +180,8 @@ class BackgroundResearchProcessor:
                 "task_id": task_id,
                 "status": "completed",
                 "final_report": final_report,
+                "summary": summary,
+                "insights": insights,
                 "processing_time": execution_time,
                 "sources_analyzed": sources_count
             }

@@ -58,6 +58,10 @@ class ResearchTaskDB(Base):
     processing_time = Column(Float, nullable=True)
     sources_analyzed = Column(Integer, nullable=True)
     
+    # Summary and insights (extracted from final_report)
+    summary = Column(Text, nullable=True)
+    insights = Column(Text, nullable=True)  # JSON string of key_points list
+    
     # Configuration parameters
     max_plan_iterations = Column(Integer, default=1)
     max_step_num = Column(Integer, default=3)
@@ -70,6 +74,16 @@ class ResearchTaskDB(Base):
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
+        import json
+        
+        # Parse insights JSON if available
+        insights_list = []
+        if self.insights:
+            try:
+                insights_list = json.loads(self.insights)
+            except json.JSONDecodeError:
+                insights_list = []
+        
         return {
             "research_id": self.id,
             "query": self.query,
@@ -78,6 +92,8 @@ class ResearchTaskDB(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "final_report": self.final_report,
+            "summary": self.summary,
+            "insights": insights_list,
             "error": self.error,
             "processing_time": self.processing_time,
             "sources_analyzed": self.sources_analyzed,
@@ -182,6 +198,11 @@ class ResearchTaskRepository:
             old_status = task.status
             task.status = status
             task.updated_at = datetime.now()
+            
+            # Handle insights field specially (convert list to JSON string)
+            import json
+            if 'insights' in kwargs and isinstance(kwargs['insights'], list):
+                kwargs['insights'] = json.dumps(kwargs['insights'], ensure_ascii=False)
             
             # Update additional fields
             for key, value in kwargs.items():
