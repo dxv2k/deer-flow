@@ -203,9 +203,14 @@ async def get_research_status(research_id: str):
         # Parse insights from JSON string if available
         insights_list = []
         if task.insights:
-            try:
-                insights_list = json.loads(task.insights)
-            except json.JSONDecodeError:
+            if isinstance(task.insights, list):
+                insights_list = task.insights
+            elif isinstance(task.insights, str):
+                try:
+                    insights_list = json.loads(task.insights)
+                except json.JSONDecodeError:
+                    insights_list = []
+            else:
                 insights_list = []
         
         return ResearchResult(
@@ -249,9 +254,14 @@ async def get_research_results(research_id: str):
         # Parse insights from JSON string if available
         insights_list = []
         if task.insights:
-            try:
-                insights_list = json.loads(task.insights)
-            except json.JSONDecodeError:
+            if isinstance(task.insights, list):
+                insights_list = task.insights
+            elif isinstance(task.insights, str):
+                try:
+                    insights_list = json.loads(task.insights)
+                except json.JSONDecodeError:
+                    insights_list = []
+            else:
                 insights_list = []
         
         return {
