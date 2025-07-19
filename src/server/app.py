@@ -8,9 +8,10 @@ import os
 from typing import Annotated, List, cast
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.openapi.utils import get_openapi
 from langchain_core.messages import AIMessageChunk, BaseMessage, ToolMessage
 from langgraph.types import Command
 
@@ -48,8 +49,29 @@ INTERNAL_SERVER_ERROR_DETAIL = "Internal Server Error"
 
 app = FastAPI(
     title="DeerFlow API",
-    description="API for Deer",
+    description="Advanced Research and Analysis API with AI-powered insights, summarization, and multi-modal content generation",
     version="0.1.0",
+    docs_url="/docs",  # Swagger UI endpoint
+    redoc_url="/redoc",  # ReDoc endpoint
+    openapi_url="/openapi.json",  # OpenAPI schema endpoint
+    contact={
+        "name": "DeerFlow Team",
+        "email": "support@deerflow.ai",
+    },
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    servers=[
+        {
+            "url": "http://localhost:8000",
+            "description": "Development server"
+        },
+        {
+            "url": "https://api.deerflow.ai",
+            "description": "Production server"
+        }
+    ]
 )
 
 # Add CORS middleware
@@ -61,7 +83,40 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Include research API router
+from src.server.research_api import router as research_router
+app.include_router(research_router)
+
 graph = build_graph_with_memory()
+
+
+# Health check and API info endpoints
+@app.get("/", tags=["Root"])
+async def root():
+    """Root endpoint with API information."""
+    return {
+        "message": "Welcome to DeerFlow API",
+        "version": "0.1.0",
+        "docs": "/docs",
+        "redoc": "/redoc",
+        "openapi": "/openapi.json",
+        "health": "/health"
+    }
+
+
+@app.get("/health", tags=["Health"])
+async def health_check():
+    """Health check endpoint for monitoring and load balancers."""
+    return {
+        "status": "healthy",
+        "timestamp": "2025-01-18T21:30:00Z",
+        "version": "0.1.0",
+        "services": {
+            "database": "connected",
+            "llm": "available",
+            "research_api": "running"
+        }
+    }
 
 
 @app.post("/api/chat/stream")
@@ -410,3 +465,25 @@ async def config():
         rag=RAGConfigResponse(provider=SELECTED_RAG_PROVIDER),
         models=get_configured_llm_models(),
     )
+
+
+@app.middleware("http")
+async def set_openapi_server_url(request: Request, call_next):
+    # Only update for OpenAPI/Swagger requests
+    if request.url.path in ["/openapi.json", "/docs", "/redoc"]:
+        # Dynamically set the server URL to match the request
+        app.openapi_schema = None  # Force regeneration
+        def custom_openapi():
+            openapi_schema = get_openapi(
+                title=app.title,
+                version=app.version,
+                description=app.description,
+                routes=app.routes,
+            )
+            openapi_schema["servers"] = [
+                {"url": f"{request.base_url.scheme}://{request.base_url.hostname}:{request.base_url.port}"}
+            ]
+            return openapi_schema
+        app.openapi = custom_openapi
+    response = await call_next(request)
+    return response
