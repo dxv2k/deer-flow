@@ -1,0 +1,3 @@
+[submodule "deer-flow"]
+	path = deer-flow
+	url = git@github.com:dxv2k/deer-flow.git

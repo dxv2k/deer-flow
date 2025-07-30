@@ -13,7 +13,6 @@ from pydantic import BaseModel
 
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +23,6 @@ class ReportInsight(BaseModel):
     summary: str
     key_points: List[str]
 
-def extract_json_from_markdown(text: str) -> str:
-    """
-    Extract JSON string from a Markdown code block, if present.
-    """
-    cleaned = re.sub(r"^```(?:json)?\s*", "", text.strip(), flags=re.IGNORECASE)
-    cleaned = re.sub(r"```\s*$", "", cleaned)
-    return cleaned.strip()
 
 class ResearchSummarizer:
     """
@@ -38,7 +30,7 @@ class ResearchSummarizer:
     Integrated version of summarize_report.py for workflow usage
     """
     
-    def __init__(self, model: str = "gpt-4-1106-preview", temperature: float = 0.2):
+    def __init__(self, model: str = "gpt-4.1", temperature: float = 0.5):
         """
         Initialize the summarizer with LLM configuration
         
@@ -54,12 +46,13 @@ class ResearchSummarizer:
         
         # Prepare the prompt template
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are an expert market analyst. Given a research report, extract a very short summary (max 2 sentences) and 3-5 key points. Output only JSON in the following format: {{summary: str, key_points: list[str]}}."),
+            ("system", "You are an expert market analyst. Given a research report, extract a very short summary (max 2 sentences) and 3-5 key points."),
             ("human", "{report}")
         ])
         
-        # Create the chain
-        self.chain = self.prompt | self.llm
+        # Create structured output chain using with_structured_output
+        self.structured_llm = self.llm.with_structured_output(ReportInsight)
+        self.chain = self.prompt | self.structured_llm
         
         logger.info(f"ResearchSummarizer initialized with model: {self.model}")
     
@@ -79,14 +72,8 @@ class ResearchSummarizer:
         try:
             logger.info(f"Summarizing report (length: {len(report_text)} chars)")
             
-            # Run the LLM chain
-            response = self.chain.invoke({"report": report_text})
-            logger.info(f"Raw LLM response: {response.content}")
-            
-            # Parse the JSON output
-            json_str = extract_json_from_markdown(response.content)
-            data = json.loads(json_str)
-            insight = ReportInsight(**data)
+            # Run the structured output chain - this returns a ReportInsight directly
+            insight = self.chain.invoke({"report": report_text})
             
             logger.info(f"Successfully generated summary: {len(insight.summary)} chars, {len(insight.key_points)} key points")
             return insight
@@ -190,7 +177,7 @@ def main():
     try:
         summarizer = ResearchSummarizer()
         insight = summarizer.summarize_report_file(report_path)
-        print(insight.model_dump_json(indent=2, ensure_ascii=False))
+        print(insight.model_dump_json(indent=2))
     except Exception as e:
         print(f"Failed to summarize report: {e}")
 
