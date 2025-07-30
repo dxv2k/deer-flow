@@ -173,7 +173,7 @@ async def submit_research(
 
 @router.get("/status/{research_id}", 
     response_model=ResearchResult,
-    summary="Get Research Status",
+    summary="Get Research Status", 
     description="Retrieve the current status and results of a research task, including summary and insights when completed."
 )
 async def get_research_status(research_id: str):
@@ -200,18 +200,8 @@ async def get_research_status(research_id: str):
         if not task:
             raise HTTPException(status_code=404, detail="Research task not found")
         
-        # Parse insights from JSON string if available
-        insights_list = []
-        if task.insights:
-            if isinstance(task.insights, list):
-                insights_list = task.insights
-            elif isinstance(task.insights, str):
-                try:
-                    insights_list = json.loads(task.insights)
-                except json.JSONDecodeError:
-                    insights_list = []
-            else:
-                insights_list = []
+        # insights is already parsed by ResearchTask.from_db()
+        insights_list = task.insights if task.insights else []
         
         return ResearchResult(
             research_id=task.id,
@@ -251,18 +241,8 @@ async def get_research_results(research_id: str):
                 detail=f"Research not completed yet. Current status: {task.status.value}"
             )
         
-        # Parse insights from JSON string if available
-        insights_list = []
-        if task.insights:
-            if isinstance(task.insights, list):
-                insights_list = task.insights
-            elif isinstance(task.insights, str):
-                try:
-                    insights_list = json.loads(task.insights)
-                except json.JSONDecodeError:
-                    insights_list = []
-            else:
-                insights_list = []
+        # insights is already parsed by ResearchTask.from_db()
+        insights_list = task.insights if task.insights else []
         
         return {
             "research_id": task.id,
@@ -407,3 +387,4 @@ async def get_research_statistics():
     except Exception as e:
         logger.error(f"Failed to get research statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
