@@ -57,9 +57,15 @@ class ResearchTask:
         insights_list = []
         if getattr(db_task, 'insights', None):
             import json
-            try:
-                insights_list = json.loads(db_task.insights)
-            except Exception:
+            insights_data = db_task.insights
+            if isinstance(insights_data, list):
+                insights_list = insights_data
+            elif isinstance(insights_data, str):
+                try:
+                    insights_list = json.loads(insights_data)
+                except Exception:
+                    insights_list = []
+            else:
                 insights_list = []
         return cls(
             id=db_task.id,

@@ -79,9 +79,14 @@ class ResearchTaskDB(Base):
         # Parse insights JSON if available
         insights_list = []
         if self.insights:
-            try:
-                insights_list = json.loads(self.insights)
-            except json.JSONDecodeError:
+            if isinstance(self.insights, list):
+                insights_list = self.insights
+            elif isinstance(self.insights, str):
+                try:
+                    insights_list = json.loads(self.insights)
+                except json.JSONDecodeError:
+                    insights_list = []
+            else:
                 insights_list = []
         
         return {
